@@ -28,6 +28,8 @@ from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
 
 
+
+
 class GripperAction(IntEnum):
     CLOSE = 0
     STAY = 1
@@ -57,7 +59,18 @@ class GamepadTeleop(Teleoperator):
         self.gamepad = None
 
     @property
+    def _is_ps5_mode(self) -> bool:
+        return self.config.id == "ps5_controller"
+
+    @property
     def action_features(self) -> dict:
+        if self._is_ps5_mode:
+            motor_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+            return {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": {f"{m}.pos": i for i, m in enumerate(motor_names)},
+            }
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
@@ -76,6 +89,11 @@ class GamepadTeleop(Teleoperator):
         return {}
 
     def connect(self) -> None:
+        if self._is_ps5_mode:
+            from .gamepad_utils import PS5JoystickController
+            self.gamepad = PS5JoystickController()
+            return
+
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
@@ -88,6 +106,15 @@ class GamepadTeleop(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        if self._is_ps5_mode:
+            cmd = self.gamepad.get_command()
+            if cmd is None:
+                # Not yet initialized — read robot obs and initialize now
+                raise RuntimeError(
+                    "PS5 controller not initialized. Call send_feedback(robot.get_observation()) first."
+                )
+            return cmd
+
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -132,14 +159,17 @@ class GamepadTeleop(Teleoperator):
                 TeleopEvents.RERECORD_EPISODE: False,
             }
 
-        # Update gamepad state to get fresh inputs
-        self.gamepad.update()
+        if self._is_ps5_mode:
+            # PS5JoystickController updates positions in background thread;
+            # episode status and intervention are tracked internally.
+            is_intervention = self.gamepad.should_intervene()
+            episode_end_status = self.gamepad.get_episode_end_status()
+        else:
+            # Update gamepad state to get fresh inputs
+            self.gamepad.update()
+            is_intervention = self.gamepad.should_intervene()
+            episode_end_status = self.gamepad.get_episode_end_status()
 
-        # Check if intervention is active
-        is_intervention = self.gamepad.should_intervene()
-
-        # Get episode end status
-        episode_end_status = self.gamepad.get_episode_end_status()
         terminate_episode = episode_end_status in [
             TeleopEvents.RERECORD_EPISODE,
             TeleopEvents.FAILURE,
@@ -181,6 +211,7 @@ class GamepadTeleop(Teleoperator):
         pass
 
     def send_feedback(self, feedback: dict) -> None:
-        """Send feedback to the gamepad."""
-        # Gamepad doesn't support feedback
-        pass
+        if self._is_ps5_mode and self.gamepad is not None:
+            if not self.gamepad._positions_initialized:
+                joint_limits = feedback.pop("__joint_limits__", None)
+                self.gamepad.initialize_from_obs(feedback, joint_limits=joint_limits)

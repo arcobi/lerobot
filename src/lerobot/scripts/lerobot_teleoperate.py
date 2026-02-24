@@ -220,6 +220,34 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    # Sync teleop to robot's current joint positions before starting the loop.
+    # This prevents the PS5 controller (and any other position-based teleop) from
+    # commanding the robot to move on the very first action.
+    # Compute per-joint normalized limits from the robot's bus motor definitions + calibration.
+    feedback = dict(robot.get_observation())
+    if hasattr(robot, "bus") and hasattr(robot.bus, "motors") and hasattr(robot, "calibration") and robot.calibration:
+        from lerobot.motors import MotorNormMode
+        joint_limits = {}
+        resolution_table = getattr(robot.bus, "model_resolution_table", {})
+        for name, motor in robot.bus.motors.items():
+            cal = robot.calibration.get(name)
+            if cal is None:
+                continue
+            if motor.norm_mode is MotorNormMode.RANGE_0_100:
+                joint_limits[name] = (0.0, 100.0)
+            elif motor.norm_mode is MotorNormMode.RANGE_M100_100:
+                joint_limits[name] = (-100.0, 100.0)
+            elif motor.norm_mode is MotorNormMode.DEGREES:
+                mid = (cal.range_min + cal.range_max) / 2
+                max_res = resolution_table.get(motor.model, 4096) - 1
+                joint_limits[name] = (
+                    (cal.range_min - mid) * 360 / max_res,
+                    (cal.range_max - mid) * 360 / max_res,
+                )
+        if joint_limits:
+            feedback["__joint_limits__"] = joint_limits
+    teleop.send_feedback(feedback)
+
     try:
         teleop_loop(
             teleop=teleop,
