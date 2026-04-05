@@ -1,6 +1,6 @@
 # Personal Fork of lerobot
 
-Added PS4 teleop support for SO101 to collect dataset.
+Added PS4 teleop support for SO101 for dataset collection without a leader arm.
 
 ![SO101 teleop demo](./so101.gif)
 
