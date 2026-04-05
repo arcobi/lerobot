@@ -1,3 +1,11 @@
+# Personal Fork of lerobot
+
+Added PS4 teleop support for SO101 to collect dataset.
+
+![SO101 teleop demo](./so101.gif)
+
+---
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>
